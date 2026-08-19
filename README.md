@@ -39,10 +39,9 @@ We sent the single word prompt `"Hi"` to each endpoint and measured the reported
 
 | Model / Endpoint | Input Tokens Before Fix | Input Tokens After Fix | Token Reduction |
 | :--- | :--- | :--- | :--- |
-| `claude-opus-4-6-checker` | **3,233 tokens** | **9 tokens** | **-99.7%** (saved 3,224 tokens) |
-| `claude-opus-5` | **2,839 tokens** | **130 tokens** | **-95.4%** (saved 2,709 tokens) |
-| `claude-sonnet-4` | **2,874 tokens** | **137 tokens** | **-95.2%** (saved 2,737 tokens) |
-| `/v1/chat/completions` | **2,921 tokens** | **110 tokens** | **-96.2%** (saved 2,811 tokens) |
+| `claude-opus-5 Max` | **3,233 tokens** | **9 tokens** | **-99.7%** (saved 3,224 tokens) |
+| `Antigravity flash 3.7 Max` | **2,839 tokens** | **130 tokens** | **-95.4%** (saved 2,709 tokens) |
+| `Local Model-Qwen 3.8-27b` | **2,874 tokens** | **137 tokens** | **-95.2%** (saved 2,737 tokens) |
 
 ---
 
