@@ -198,11 +198,20 @@ async function run() {
 
     if (c8895.includes(target)) {
       c8895 = c8895.replace(target, replacement);
-      fs.writeFileSync(p8895, c8895, 'utf8');
       console.log('  ✅ [8895.js] Injected universal Anthropic /v1/messages adapter');
     } else {
       console.log('  ℹ️  [8895.js] Anthropic message format adapter already present');
     }
+
+    const ttsTarget = '"tts"===(0,m.OA)(at,an)&&af.messages&&(af.messages=af.messages.filter(a=>"tool"!==a.role),delete af.tools);';
+    const ttsRepl = '"tts"===(0,m.OA)(at,an)&&af.messages&&(af.messages=af.messages.filter(a=>"tool"!==a.role),delete af.tools);if(/qwen|uns|local/i.test(String(an||""))||/unsloth|ollama/i.test(String(am||""))){if(Array.isArray(af.messages)){for(let a of af.messages){if(a&&"string"==typeof a.content){a.content=a.content.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()}else if(a&&Array.isArray(a.content)){a.content=a.content.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()}return a}).filter(a=>!("text"===a?.type&&!a.text))}}}}';
+
+    if (c8895.includes(ttsTarget)) {
+      c8895 = c8895.replace(ttsTarget, ttsRepl);
+      console.log('  ✅ [8895.js] Injected local model prompt stripping filter');
+    }
+
+    fs.writeFileSync(p8895, c8895, 'utf8');
   }
 
   // --- Patch 4: SQLite Database (Disable Persona Injections) ---
