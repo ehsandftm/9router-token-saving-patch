@@ -1,0 +1,29 @@
+{
+  "name": "9router-token-saving-patch",
+  "version": "1.0.0",
+  "description": "1-line zero-credential patch eliminating +2800 phantom token overhead, dummy tool schemas, and Claude format errors in 9Router.",
+  "main": "patch.js",
+  "bin": {
+    "9router-token-saving-patch": "./patch.js",
+    "9router-patch": "./patch.js"
+  },
+  "scripts": {
+    "patch": "node patch.js",
+    "revert": "node patch.js --revert",
+    "status": "node patch.js --status"
+  },
+  "keywords": [
+    "9router",
+    "token-optimization",
+    "claude-desktop",
+    "claude-code",
+    "patch",
+    "anthropic",
+    "proxy"
+  ],
+  "author": "ehsandftm",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
