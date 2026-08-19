@@ -86,11 +86,15 @@ For developers, contributors, and auditors, here is the exact breakdown of the 4
 - **The Bug**: Whenever an incoming request declared tools, 9Router merged **21 fake Antigravity tools** (`browser_subagent`, `replace_file_content`, etc.) and **20 fake Claude tools** (`Task`, `TaskOutput`, `Bash`, `Glob`, etc.) into the outbound payload, burning ~1,500–2,500 extra tokens per request.
 - **The Fix**: Emptied dummy arrays (`let x = []` and `let h = []`). Outbound requests now strictly transmit only the real tools requested by your client.
 
-### 3. Universal Anthropic Message Format Adapter (`8895.js` — Module 5016)
-- **The Bug**: When `/v1/messages` routed requests to non-Anthropic fallback providers (Gemini, Antigravity, OpenCode, Kimi), 9Router returned raw OpenAI completion objects (`{"object":"chat.completion", "choices":[...]}`). Claude Desktop and Claude Code threw `HTTP 200: empty or malformed response` because they expected Anthropic schema (`{"type":"message", "content":[...]}`).
-- **The Fix**: Injected an automatic schema adapter in module `5016` that translates OpenAI completion payloads into valid Anthropic Message objects (`type: "message"`, `role: "assistant"`, `content: [...]`, `stop_reason: "end_turn"`).
+### 3. Universal Anthropic Message Format & Prompt Cache Adapter (`8895.js` — Module 5016)
+- **The Bug**: When `/v1/messages` routed requests to non-Anthropic fallback providers (Gemini, Antigravity, OpenCode, Kimi), 9Router returned raw OpenAI completion objects (`{"object":"chat.completion", "choices":[...]}`). Claude Desktop and Claude Code threw `HTTP 200: empty or malformed response` because they expected Anthropic schema (`{"type":"message", "content":[...]}`). Furthermore, upstream prompt cache read tokens (`cache_read_input_tokens`, `cached_tokens`, `prompt_tokens_details.cached_tokens`) were dropped during conversion, registering cached tokens as 100% full input costs.
+- **The Fix**: Injected an automatic schema adapter in module `5016` that translates OpenAI completion payloads into valid Anthropic Message objects (`type: "message"`, `role: "assistant"`, `content: [...]`, `stop_reason: "end_turn"`), accurately calculating and preserving `cache_read_input_tokens` and `cache_creation_input_tokens`.
 
-### 4. Automatic System Persona Disabling (`data.sqlite`)
+### 4. Transparent Local Model Prompt Stripper (`318.js` & `8895.js` — Modules 32447, 96179, & /v1/messages)
+- **The Bug**: Heavy desktop manager instructions, rules, and `<system-reminder>` blocks were transmitted verbatim to local models (Ollama / Unsloth Qwen), imposing massive prompt evaluation compute delays (up to 15,000+ unnecessary tokens per local turn).
+- **The Fix**: Automatically strips `<system-reminder>` blocks from requests dispatched to local model endpoints (`/qwen|uns|local/i`), reducing local prompt evaluation latency by over 99.5% (~3.2s execution).
+
+### 5. Automatic System Persona Disabling (`data.sqlite`)
 - **The Bug**: 9Router's internal database had `cavemanEnabled: true` and `ponytailEnabled: true` active by default, prepending ~780 tokens of unsolicited persona rules into every prompt.
 - **The Fix**: Sets `cavemanEnabled: false` and `ponytailEnabled: false` in `settings` table.
 

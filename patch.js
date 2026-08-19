@@ -110,14 +110,21 @@ async function run() {
 
   // Handle Status
   if (isStatus) {
-    let patched318 = fs.existsSync(p318) && !fs.readFileSync(p318, 'utf8').includes('void 0!==b.input_tokens&&(b.input_tokens+=2e3)');
-    let patched8499 = fs.existsSync(p8499) && fs.readFileSync(p8499, 'utf8').includes('let x=[]}');
-    let patched8895 = fs.existsSync(p8895) && fs.readFileSync(p8895, 'utf8').includes('if(q==="claude"&&L?.choices&&L?.type!=="message")');
+    let c318 = fs.existsSync(p318) ? fs.readFileSync(p318, 'utf8') : '';
+    let c8499 = fs.existsSync(p8499) ? fs.readFileSync(p8499, 'utf8') : '';
+    let c8895 = fs.existsSync(p8895) ? fs.readFileSync(p8895, 'utf8') : '';
+
+    let patched318Inflation = c318 && !c318.includes('void 0!==b.input_tokens&&(b.input_tokens+=2e3)');
+    let patched318Filter = c318 && c318.includes('this.provider?.startsWith?.("openai-compatible-")');
+    let patched8499 = c8499 && c8499.includes('let x=[]}');
+    let patched8895 = c8895 && c8895.includes('if(q==="claude"&&L?.choices&&L?.type!=="message")');
+    let patched8895Filter = c8895 && c8895.includes('/qwen|uns|local/i.test(String(an||""))');
 
     console.log('--- Current Patch Status ---');
-    console.log(`1. Hardcoded +2000 token inflation (318.js) : ${patched318 ? '✅ FIXED (0 fake tokens)' : '⚠️ UNPATCHED (+2000 tokens active)'}`);
+    console.log(`1. Hardcoded +2000 token inflation (318.js) : ${patched318Inflation ? '✅ FIXED (0 fake tokens)' : '⚠️ UNPATCHED (+2000 tokens active)'}`);
     console.log(`2. Injected dummy tools removal (8499.js)    : ${patched8499 ? '✅ FIXED (Clean schemas)' : '⚠️ UNPATCHED (40+ dummy tools active)'}`);
-    console.log(`3. Claude Anthropic wire format (8895.js)   : ${patched8895 ? '✅ FIXED (Anthropic schema)' : '⚠️ UNPATCHED (OpenAI fallback)'}`);
+    console.log(`3. Claude Anthropic wire format (8895.js)   : ${patched8895 ? '✅ FIXED (Anthropic schema & cache support)' : '⚠️ UNPATCHED (OpenAI fallback)'}`);
+    console.log(`4. Local model prompt stripper (318/8895)   : ${patched318Filter || patched8895Filter ? '✅ FIXED (Active)' : 'ℹ️ OPTIONAL (Standard)'}`);
     console.log('');
     return;
   }
@@ -162,6 +169,14 @@ async function run() {
       }
     }
 
+    // OpenAI-compatible prompt filter in module 96179
+    const target96179 = 'transformRequest(a,b){let c=this.applyJsonSchemaFallback(b);return c&&"object"==typeof c&&(this.config.quirks?.dropClientMetadata&&delete c.client_metadata,(0,l.c)(this.provider,a,c)),(0,k.Z)({provider:this.provider,model:a,body:c})}';
+    const repl96179 = 'transformRequest(a,b){let c=this.applyJsonSchemaFallback(b);if(c&&"object"==typeof c){if(this.provider?.startsWith?.("openai-compatible-")||/qwen|uns|local/i.test(String(a||""))){if(Array.isArray(c.messages)){for(let a of c.messages){if(a&&"string"==typeof a.content){a.content=a.content.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()}else if(a&&Array.isArray(a.content)){a.content=a.content.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()}return a}).filter(a=>!("text"===a?.type&&!a.text))}}}}this.config.quirks?.dropClientMetadata&&delete c.client_metadata,(0,l.c)(this.provider,a,c)}return(0,k.Z)({provider:this.provider,model:a,body:c})}';
+    if (c318.includes(target96179)) {
+      c318 = c318.replace(target96179, repl96179);
+      console.log('  ✅ [318.js] Injected OpenAI-compatible local model prompt filter');
+    }
+
     fs.writeFileSync(p318, c318, 'utf8');
   }
 
@@ -194,11 +209,11 @@ async function run() {
     let c8895 = fs.readFileSync(p8895, 'utf8');
 
     const target = 'let M=q===d.h.CLAUDE&&L?.type==="message"';
-    const replacement = 'if(q==="claude"&&L?.choices&&L?.type!=="message"){L=function(a){if(!a?.choices?.[0])return a;let b=a.choices[0],c=b.message||{},e=[],g=c.reasoning_content||c.provider_specific_fields?.reasoning_content||"";for(let a of(g&&e.push({type:"thinking",thinking:g}),"string"==typeof c.content&&c.content.length>0&&e.push({type:"text",text:c.content}),c.tool_calls||[])){let b=a.function||{};e.push({type:"tool_use",id:a.id||`toolu_${Date.now()}_${e.length}`,name:b.name||a.name||"",input:function(a){if(!a)return{};if("object"==typeof a)return a;try{return JSON.parse(a)}catch{return{}}}(b.arguments||a.arguments)})}0===e.length&&e.push({type:"text",text:""});let h=a.usage||{};return{id:String(a.id||`msg_${Date.now()}`).replace(/^chatcmpl-/,"msg_"),type:"message",role:"assistant",model:a.model||"unknown",content:e,stop_reason:(0,f.Q)(b.finish_reason,"claude"),stop_sequence:null,usage:{input_tokens:h.prompt_tokens||h.input_tokens||0,output_tokens:h.completion_tokens||h.output_tokens||0}}}(L)};let M=q===d.h.CLAUDE&&L?.type==="message"';
+    const replacement = 'if(q==="claude"&&L?.choices&&L?.type!=="message"){L=function(a){if(!a?.choices?.[0])return a;let b=a.choices[0],c=b.message||{},e=[],g=c.reasoning_content||c.provider_specific_fields?.reasoning_content||"";for(let a of(g&&e.push({type:"thinking",thinking:g}),"string"==typeof c.content&&c.content.length>0&&e.push({type:"text",text:c.content}),c.tool_calls||[])){let b=a.function||{};e.push({type:"tool_use",id:a.id||`toolu_${Date.now()}_${e.length}`,name:b.name||a.name||"",input:function(a){if(!a)return{};if("object"==typeof a)return a;try{return JSON.parse(a)}catch{return{}}}(b.arguments||a.arguments)})}0===e.length&&e.push({type:"text",text:""});let h=a.usage||{},k=h.cache_read_input_tokens??h.cached_tokens??h.prompt_tokens_details?.cached_tokens??0,l=h.cache_creation_input_tokens??h.prompt_tokens_details?.cache_creation_tokens??0,m=h.input_tokens??h.prompt_tokens??0,n=void 0!==h.cache_read_input_tokens?m:Math.max(0,m-k);return{id:String(a.id||`msg_${Date.now()}`).replace(/^chatcmpl-/,"msg_"),type:"message",role:"assistant",model:a.model||"unknown",content:e,stop_reason:(0,f.Q)(b.finish_reason,"claude"),stop_sequence:null,usage:{input_tokens:n,output_tokens:h.completion_tokens||h.output_tokens||0,...(k>0?{cache_read_input_tokens:k}:{}),...(l>0?{cache_creation_input_tokens:l}:{})}}}(L)};let M=q===d.h.CLAUDE&&L?.type==="message"';
 
     if (c8895.includes(target)) {
       c8895 = c8895.replace(target, replacement);
-      console.log('  ✅ [8895.js] Injected universal Anthropic /v1/messages adapter');
+      console.log('  ✅ [8895.js] Injected universal Anthropic /v1/messages adapter with cache token support');
     } else {
       console.log('  ℹ️  [8895.js] Anthropic message format adapter already present');
     }
@@ -216,10 +231,13 @@ async function run() {
 
   // --- Patch 4: SQLite Database (Disable Persona Injections) ---
   if (sqliteDb && fs.existsSync(sqliteDb)) {
+    let sqliteUpdated = false;
+
+    // Method 1: Node 22+ built-in node:sqlite
     try {
       let nodeSqlite;
       try { nodeSqlite = require('node:sqlite'); } catch {}
-      
+
       if (nodeSqlite && nodeSqlite.DatabaseSync) {
         const db = new nodeSqlite.DatabaseSync(sqliteDb);
         const row = db.prepare('SELECT * FROM settings WHERE id = 1').get();
@@ -229,12 +247,30 @@ async function run() {
             data.cavemanEnabled = false;
             data.ponytailEnabled = false;
             db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(data));
-            console.log('  ✅ [SQLite] Disabled caveman & ponytail persona prompt injections');
+            sqliteUpdated = true;
+            console.log('  ✅ [SQLite] Disabled caveman & ponytail persona prompt injections via node:sqlite');
           }
         }
       }
-    } catch (e) {
-      // Non-fatal if sqlite module is locked
+    } catch (e) {}
+
+    // Method 2: System sqlite3 CLI fallback if Node.js < 22
+    if (!sqliteUpdated) {
+      try {
+        const query = 'SELECT data FROM settings WHERE id = 1;';
+        const raw = execSync(`sqlite3 "${sqliteDb}" "${query}"`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.cavemanEnabled || data.ponytailEnabled) {
+            data.cavemanEnabled = false;
+            data.ponytailEnabled = false;
+            const updatedJson = JSON.stringify(data).replace(/'/g, "''");
+            execSync(`sqlite3 "${sqliteDb}" "UPDATE settings SET data = '${updatedJson}' WHERE id = 1;"`, { stdio: 'ignore' });
+            sqliteUpdated = true;
+            console.log('  ✅ [SQLite] Disabled caveman & ponytail persona prompt injections via sqlite3 CLI');
+          }
+        }
+      } catch (e) {}
     }
   }
 
