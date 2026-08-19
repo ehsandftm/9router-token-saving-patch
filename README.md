@@ -116,6 +116,31 @@ Yes. Running `npm update -g 9router` replaces the chunk files with fresh upstrea
 #### Does this change my model combos or routing rules?
 No. Your combos, API keys, and custom routes remain untouched.
 
+
+---
+
+## ☕ Support the Project / حمایت از پروژه
+
+If you find this project useful, you can support its development:
+
+اگر این پروژه برات مفید بوده، می‌تونی برای حمایت از توسعه اون کمک کنی:
+
+### 💰 TRON (TRC20)
+**TFJ6ucBpZ6KghntTq9W3eadnN8gPCqgF3T**
+
+
+- **Network:** TRON (TRC20)  
+- **Supported:** TRX / USDT (TRC20)
+
+🙏 Your support helps keep this project active and continuously improving.  
+🙏 حمایت شما باعث ادامه و پیشرفت پروژه خواهد شد.
+
+---
+
+*Developed with ❤️ for a free and stable internet.*
+حقوق معنوی این نرم افزار برای من محفوظ می باشد.
+
+
 ---
 
 ## 📄 License
