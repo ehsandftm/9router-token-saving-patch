@@ -23,17 +23,7 @@ This repository provides a **1-line, credential-free patch** that modifies only 
 
 ## 📊 Token Savings Benchmark
 
-### 1. Claude Desktop & Agent Tool Payloads
-When tools and system prompts are attached (e.g., standard Claude Desktop environment):
-
-| Client Request / Environment | Input Tokens (Before) | Input Tokens (After) | Net Savings |
-| :--- | :--- | :--- | :--- |
-| **Claude Desktop `"Hi"` (with 5 MCP Tools)** | **3,800+ tokens** | **126 tokens** | **-96.7%** (saved 3,674 tokens) |
-| **Claude Desktop `"Hi"` (Gemini fallback)** | **3,500+ tokens** | **269 tokens** | **-92.3%** (saved 3,231 tokens) |
-
----
-
-### 2. Live Measurement (Before vs. After Fix)
+### 1. Live Measurement (Before vs. After Fix)
 
 We sent the single word prompt `"Hi"` to each endpoint and measured the reported usage:
 
@@ -42,6 +32,24 @@ We sent the single word prompt `"Hi"` to each endpoint and measured the reported
 | `claude-opus-5 Max` | **3,233 tokens** | **9 tokens** | **-99.7%** (saved 3,224 tokens) |
 | `Antigravity flash 3.7 Max` | **2,839 tokens** | **130 tokens** | **-95.4%** (saved 2,709 tokens) |
 | `Local Model-Qwen 3.8-27b` | **2,874 tokens** | **137 tokens** | **-95.2%** (saved 2,737 tokens) |
+
+---
+
+### 2. Test Harness & Context Token Breakdown (Claude Code Desktop)
+
+All measurements were verified in the live **Claude Code Desktop Client** environment (`checker 1M` context window profile) with active MCP servers, skills, and memory systems:
+
+| Context Layer / Component | Reserved Tokens | % of 1M Window | Details / Item Count |
+| :--- | :--- | :--- | :--- |
+| **System tools** | **20.9k** | 2.1% | Core agent execution tools |
+| **Memory files** | **11.6k** | 1.2% | 10 persistent memory / rule files |
+| **MCP tools** | **8k** | 0.8% | 45 MCP tools across active servers |
+| **System prompt** | **7.5k** | 0.8% | Core agent operating instructions |
+| **Skills** | **5.4k** | 0.5% | Domain expertise & customization skills |
+| **Custom agents** | **346** | <0.1% | 4 subagent configurations |
+| **Autocompact buffer** | **33k** | 3.3% | Context sliding & compression safety buffer |
+| **Free space** | **842.8k** | 84.3% | Available conversation headspace |
+| **Total Context Window** | **123.9k / 1M (12%)** | 100% | Full agentic workspace harness |
 
 ---
 
