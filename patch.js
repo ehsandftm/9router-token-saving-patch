@@ -187,6 +187,7 @@ function hasPatchSignatures(content) {
          content.includes('/* __9R_32447_KIMCHI_FIX__ */') ||
          content.includes('/* __9R_96179_FIX__ */') ||
          content.includes('/* __9R_96179_FIX_v2__ */') ||
+         content.includes('/* __9R_7373_FIX__ */') ||
          content.includes('/* __9R_8499_TOOLS_FIX__ */') ||
          content.includes('/* __9R_CLAUDE_OPUS_MEDIUM_THINKING__ */') ||
          content.includes('/* __9R_8895_ADAPTER_FIX__ */') ||
@@ -267,7 +268,7 @@ async function run() {
     let patchedUsage = Boolean(cUsage && (cUsage.includes('/* __9R_318_USAGE_FIX__ */') || !cUsage.includes('void 0!==b.input_tokens&&(b.input_tokens+=2e3)')));
     let patchedTools = Boolean(cTools && (cTools.includes('/* __9R_8499_TOOLS_FIX__ */') || !cTools.includes('name:"browser_subagent"')));
     let patchedAnthropic = Boolean(cAnthropic && (cAnthropic.includes('/* __9R_8895_ADAPTER_FIX__ */') || cAnthropic.includes('b===d.h.OPENAI&&c===d.h.CLAUDE')));
-    let patchedOpenAiFilter = Boolean(cOpenAi && (cOpenAi.includes('/* __9R_96179_FIX__ */') || cOpenAi.includes('/* __9R_96179_FIX_v2__ */')));
+    let patchedOpenAiFilter = Boolean(cOpenAi && (cOpenAi.includes('/* __9R_96179_FIX__ */') || cOpenAi.includes('/* __9R_96179_FIX_v2__ */') || cOpenAi.includes('/* __9R_7373_FIX__ */')));
     let patchedAnthropicFilter = Boolean(cAnthropic && (cAnthropic.includes('/* __9R_8895_FILTER_FIX__ */') || cAnthropic.includes('/* __9R_8895_FILTER_FIX_v2__ */')));
 
     let sqliteStatus = 'NOT FOUND';
@@ -512,7 +513,7 @@ async function run() {
     const logsOpenAi = existingEntry ? existingEntry.logs : [];
     let openAiOk = true;
 
-    if (cOpenAi.includes('/* __9R_96179_FIX__ */') || cOpenAi.includes('/* __9R_96179_FIX_v2__ */')) {
+    if (cOpenAi.includes('/* __9R_96179_FIX__ */') || cOpenAi.includes('/* __9R_96179_FIX_v2__ */') || cOpenAi.includes('/* __9R_7373_FIX__ */')) {
       logsOpenAi.push(`  ℹ️  [${chunks.openAiFile}] OpenAI-compatible local model prompt filter already active`);
     } else {
       // Pattern v2 (9Router >= 0.5.111 in 7373.js): transformRequest(a,b,c,d){let e=this.applyJsonSchemaFallback(this.applyNousAttribution(a,b,c,d));...}
