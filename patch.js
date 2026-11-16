@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * 9Router Token Saving & Compatibility Patch v1.2.0
+ * 9Router Token Saving & Compatibility Patch v1.4.0
  * Eliminates ~2,800+ fake/injected token overhead, strips 40+ dummy tools,
- * enables dual-layer local model prompt stripping, and ensures Claude Desktop /
- * Claude Code compatibility across 9Router v0.5.110 and v0.5.111+ chunk layouts.
+ * enables dual-layer local model prompt stripping (while preserving <task-notification>
+ * and cloud models), and ensures Claude Desktop / Claude Code compatibility
+ * across 9Router v0.5.110 and v0.5.111+ chunk layouts.
  *
  * License: MIT
  */
@@ -20,7 +21,7 @@ const args = process.argv.slice(2);
 for (const arg of args) {
   if (!ALLOWED_FLAGS.has(arg)) {
     console.error(`Unknown option: ${arg}`);
-    console.log('\n⚡ 9Router Token Saving & Compatibility Patch v1.2.0');
+    console.log('\n⚡ 9Router Token Saving & Compatibility Patch v1.4.0');
     console.log('==================================================\n');
     console.log('Usage: 9router-patch [options]\n');
     console.log('Options:');
@@ -184,15 +185,18 @@ function hasPatchSignatures(content) {
   if (!content) return false;
   return content.includes('/* __9R_318_USAGE_FIX__ */') ||
          content.includes('/* __9R_32447_FIX__ */') ||
+         content.includes('/* __9R_32447_FIX_V2__ */') ||
          content.includes('/* __9R_32447_KIMCHI_FIX__ */') ||
          content.includes('/* __9R_96179_FIX__ */') ||
          content.includes('/* __9R_96179_FIX_v2__ */') ||
+         content.includes('/* __9R_96179_FIX_V2__ */') ||
          content.includes('/* __9R_7373_FIX__ */') ||
          content.includes('/* __9R_8499_TOOLS_FIX__ */') ||
          content.includes('/* __9R_CLAUDE_OPUS_MEDIUM_THINKING__ */') ||
          content.includes('/* __9R_8895_ADAPTER_FIX__ */') ||
          content.includes('/* __9R_8895_FILTER_FIX__ */') ||
-         content.includes('/* __9R_8895_FILTER_FIX_v2__ */');
+         content.includes('/* __9R_8895_FILTER_FIX_v2__ */') ||
+         content.includes('/* __9R_8895_FILTER_FIX_V2__ */');
 }
 
 function backupFile(filePath) {
@@ -219,9 +223,100 @@ function restoreFile(filePath) {
   return false;
 }
 
+
+// 5. Undici Compatibility Patch for Node < 22.19.0
+function patchUndiciCompatibility(pkgDir) {
+  const logs = [];
+  const undiciDir = path.join(pkgDir, 'app', 'node_modules', 'undici');
+  if (!fs.existsSync(undiciDir)) return logs;
+
+  // 5a. interceptor/decompress.js: Guard createZstdDecompress
+  const decompFile = path.join(undiciDir, 'lib', 'interceptor', 'decompress.js');
+  if (fs.existsSync(decompFile)) {
+    let c = fs.readFileSync(decompFile, 'utf8');
+    if (c.includes("typeof createZstdDecompress === 'function'")) {
+      logs.push('  ℹ️  [undici/decompress.js] zstd decompress guard already present');
+    } else {
+      const target = 'zstd: createZstdDecompress.bind(null, { params: { [constants.ZSTD_d_windowLogMax]: 23 } })';
+      const repl = "...(typeof createZstdDecompress === 'function' && constants ? { zstd: createZstdDecompress.bind(null, { params: { [constants.ZSTD_d_windowLogMax]: 23 } }) } : {})";
+      if (c.includes(target)) {
+        backupFile(decompFile);
+        c = c.replace(target, repl);
+        fs.writeFileSync(decompFile, c, 'utf8');
+        logs.push('  ✅ [undici/decompress.js] Injected createZstdDecompress guard');
+      }
+    }
+  }
+
+  // 5b. web/fetch/index.js: Guard accept-encoding and zstd decoder
+  const fetchFile = path.join(undiciDir, 'lib', 'web', 'fetch', 'index.js');
+  if (fs.existsSync(fetchFile)) {
+    let c = fs.readFileSync(fetchFile, 'utf8');
+    let changed = false;
+    const targetAccept = "httpRequest.headersList.append('accept-encoding', 'br, gzip, deflate, zstd', true)";
+    const replAccept = "httpRequest.headersList.append('accept-encoding', (typeof zlib.createZstdDecompress === 'function' ? 'br, gzip, deflate, zstd' : 'br, gzip, deflate'), true)";
+    if (c.includes(targetAccept)) {
+      backupFile(fetchFile);
+      c = c.replace(targetAccept, replAccept);
+      changed = true;
+      logs.push('  ✅ [undici/fetch/index.js] Guarded zstd in accept-encoding for Node < 22');
+    } else if (c.includes("typeof zlib.createZstdDecompress === 'function'")) {
+      logs.push('  ℹ️  [undici/fetch/index.js] accept-encoding zstd guard already present');
+    }
+
+    const targetDecode = "} else if (coding === 'zstd') {\n                  decoders.push(zlib.createZstdDecompress({";
+    const replDecode = "} else if (coding === 'zstd' && typeof zlib.createZstdDecompress === 'function') {\n                  decoders.push(zlib.createZstdDecompress({";
+    if (c.includes(targetDecode)) {
+      if (!changed) backupFile(fetchFile);
+      c = c.replace(targetDecode, replDecode);
+      changed = true;
+      logs.push('  ✅ [undici/fetch/index.js] Guarded zstd decoding stream');
+    }
+
+    if (changed) {
+      fs.writeFileSync(fetchFile, c, 'utf8');
+    }
+  }
+
+  // 5c. web/webidl/index.js: Guard markAsUncloneable
+  const webidlFile = path.join(undiciDir, 'lib', 'web', 'webidl', 'index.js');
+  if (fs.existsSync(webidlFile)) {
+    let c = fs.readFileSync(webidlFile, 'utf8');
+    if (c.includes('wt.markAsUncloneable = (o) => o')) {
+      logs.push('  ℹ️  [undici/webidl/index.js] markAsUncloneable guard already present');
+    } else if (c.includes('markAsUncloneable')) {
+      backupFile(webidlFile);
+      c = 'try { const wt = require("node:worker_threads"); if (!wt.markAsUncloneable) wt.markAsUncloneable = (o) => o; } catch (_) {}\n' + c;
+      fs.writeFileSync(webidlFile, c, 'utf8');
+      logs.push('  ✅ [undici/webidl/index.js] Injected markAsUncloneable fallback');
+    }
+  }
+
+  return logs;
+}
+
+// 6. Ensure custom-server.js is deployed in app/
+function ensureCustomServer(pkgDir) {
+  const logs = [];
+  const srcCustomServer = path.join(__dirname, 'custom-server.js');
+  const dstCustomServer = path.join(pkgDir, 'app', 'custom-server.js');
+  if (fs.existsSync(srcCustomServer)) {
+    const srcContent = fs.readFileSync(srcCustomServer, 'utf8');
+    let dstContent = fs.existsSync(dstCustomServer) ? fs.readFileSync(dstCustomServer, 'utf8') : '';
+    if (srcContent !== dstContent) {
+      backupFile(dstCustomServer);
+      fs.writeFileSync(dstCustomServer, srcContent, 'utf8');
+      logs.push('  ✅ [custom-server.js] Deployed / updated custom server wrapper with Node 20 polyfills');
+    } else {
+      logs.push('  ℹ️  [custom-server.js] Custom server wrapper up-to-date');
+    }
+  }
+  return logs;
+}
+
 async function run() {
   if (isHelp) {
-    console.log('\n⚡ 9Router Token Saving & Compatibility Patch v1.2.0');
+    console.log('\n⚡ 9Router Token Saving & Compatibility Patch v1.4.0');
     console.log('==================================================\n');
     console.log('Usage: 9router-patch [options]\n');
     console.log('Options:');
@@ -231,7 +326,7 @@ async function run() {
     process.exit(0);
   }
 
-  console.log('\n⚡ 9Router Token Saving & Compatibility Patch v1.2.0');
+  console.log('\n⚡ 9Router Token Saving & Compatibility Patch v1.4.0');
   console.log('==================================================\n');
 
   const pkgDir = find9RouterDir();
@@ -256,7 +351,8 @@ async function run() {
   if (sqliteDb) console.log(`📁 Database Path   : ${sqliteDb}`);
   console.log('');
 
-  const matchExpr = '(() => { let localModelRegex = /(?:ollama|unsloth|vllm|lmstudio|llama\\.?cpp|qwen|llama|mistral|deepseek|gemma|phi|local-|openai-compatible-)/i; if (process.env.NINEROUTER_LOCAL_MODELS) { try { localModelRegex = new RegExp(process.env.NINEROUTER_LOCAL_MODELS, "i"); } catch (e) { console.warn("⚠️ Invalid NINEROUTER_LOCAL_MODELS regex, using default."); } } return localModelRegex; })()';
+  const matchExpr = '(() => { let localModelRegex = /(?:^|[\\/\\-_:])(?:ollama|unsloth|uns|vllm|lmstudio|llama\\.?cpp|bonsai|local|gguf|qwen3\\.8-27b)(?:$|[\\/\\-_:])/i; if (process.env.NINEROUTER_LOCAL_MODELS) { try { localModelRegex = new RegExp(process.env.NINEROUTER_LOCAL_MODELS, "i"); } catch (e) { console.warn("⚠️ Invalid NINEROUTER_LOCAL_MODELS regex, using default."); } } return localModelRegex; })()';
+  const stripCall = '.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,m=>/<(?:task-notification|local-command-|command-message)/i.test(m)?m:"")';
 
   // --- Status Mode ---
   if (isStatus) {
@@ -268,8 +364,14 @@ async function run() {
     let patchedUsage = Boolean(cUsage && (cUsage.includes('/* __9R_318_USAGE_FIX__ */') || !cUsage.includes('void 0!==b.input_tokens&&(b.input_tokens+=2e3)')));
     let patchedTools = Boolean(cTools && (cTools.includes('/* __9R_8499_TOOLS_FIX__ */') || !cTools.includes('name:"browser_subagent"')));
     let patchedAnthropic = Boolean(cAnthropic && (cAnthropic.includes('/* __9R_8895_ADAPTER_FIX__ */') || cAnthropic.includes('b===d.h.OPENAI&&c===d.h.CLAUDE')));
-    let patchedOpenAiFilter = Boolean(cOpenAi && (cOpenAi.includes('/* __9R_96179_FIX__ */') || cOpenAi.includes('/* __9R_96179_FIX_v2__ */') || cOpenAi.includes('/* __9R_7373_FIX__ */')));
-    let patchedAnthropicFilter = Boolean(cAnthropic && (cAnthropic.includes('/* __9R_8895_FILTER_FIX__ */') || cAnthropic.includes('/* __9R_8895_FILTER_FIX_v2__ */')));
+    let patchedOpenAiV2 = Boolean(cOpenAi && cOpenAi.includes('/* __9R_96179_FIX_V2__ */'));
+    let patchedAnthropicV2 = Boolean(cAnthropic && cAnthropic.includes('/* __9R_8895_FILTER_FIX_V2__ */'));
+    let patchedMod32447V2 = Boolean(!cUsage.includes('32447:') || cUsage.includes('/* __9R_32447_FIX_V2__ */'));
+    let patchedFilterV1 = Boolean(
+      (cOpenAi && (cOpenAi.includes('/* __9R_96179_FIX__ */') || cOpenAi.includes('/* __9R_96179_FIX_v2__ */') || cOpenAi.includes('/* __9R_7373_FIX__ */'))) ||
+      (cAnthropic && (cAnthropic.includes('/* __9R_8895_FILTER_FIX__ */') || cAnthropic.includes('/* __9R_8895_FILTER_FIX_v2__ */'))) ||
+      (cUsage && (cUsage.includes('/* __9R_32447_FIX__ */') || cUsage.includes('/* __9R_32447_KIMCHI_FIX__ */')))
+    );
 
     let sqliteStatus = 'NOT FOUND';
     if (sqliteDb && fs.existsSync(sqliteDb) && fs.statSync(sqliteDb).size > 0) {
@@ -327,8 +429,27 @@ async function run() {
     console.log(`1. Hardcoded +2000 token inflation (${chunks.usageFile}) : ${patchedUsage ? '✅ FIXED (0 fake tokens)' : '⚠️ UNPATCHED (+2000 tokens active)'}`);
     console.log(`2. Injected dummy tools removal (${chunks.toolsFile})    : ${patchedTools ? '✅ FIXED (Clean schemas)' : '⚠️ UNPATCHED (40+ dummy tools active)'}`);
     console.log(`3. Claude Anthropic wire format (${chunks.anthropicFile}) : ${patchedAnthropic ? '✅ FIXED (Anthropic schema & cache support)' : '⚠️ UNPATCHED (OpenAI fallback)'}`);
-    console.log(`4. Local model prompt stripper (${chunks.openAiFile}/${chunks.anthropicFile}): ${(patchedOpenAiFilter || patchedAnthropicFilter) ? '✅ FIXED (Active)' : '⚠️ UNPATCHED (Standard)'}`);
+    const filterStatusLabel = (patchedAnthropicV2 && patchedMod32447V2)
+      ? '✅ FIXED V2 (Local-only + <task-notification> preserved)'
+      : patchedFilterV1
+        ? '⚠️ V1 STALE (Run patch to upgrade to V2 & stop stripping cloud <system-reminder>)'
+        : '⚠️ UNPATCHED (Standard)';
+    console.log(`4. Local model prompt stripper (${chunks.openAiFile}/${chunks.anthropicFile}): ${filterStatusLabel}`);
     console.log(`5. SQLite persona prompt injection (data.sqlite): ${sqliteStatus.startsWith('✅') ? sqliteStatus : sqliteStatus.startsWith('ℹ️') ? sqliteStatus : sqliteStatus === 'NOT FOUND' ? 'ℹ️ NOT FOUND' : '⚠️ ' + sqliteStatus}`);
+
+    // Undici & Custom Server Status
+    const undiciDir = path.join(pkgDir, 'app', 'node_modules', 'undici');
+    let undiciStatus = 'NOT FOUND / SKIPPED';
+    if (fs.existsSync(undiciDir)) {
+      const fetchFile = path.join(undiciDir, 'lib', 'web', 'fetch', 'index.js');
+      const fetchContent = fs.existsSync(fetchFile) ? fs.readFileSync(fetchFile, 'utf8') : '';
+      const isGuarded = fetchContent.includes("typeof zlib.createZstdDecompress === 'function'");
+      undiciStatus = isGuarded ? '✅ FIXED (Node <22 compatible)' : '⚠️ UNPATCHED (Requires Node >=22.19)';
+    }
+    const customServerExists = fs.existsSync(path.join(pkgDir, 'app', 'custom-server.js'));
+    console.log(`6. Undici & Node Runtime Compatibility : ${undiciStatus}`);
+    console.log(`7. Custom Server Wrapper (custom-server.js) : ${customServerExists ? '✅ INSTALLED (Socket IP & Auth header stamping)' : '⚠️ MISSING'}`);
+
     console.log('');
     return;
   }
@@ -389,6 +510,16 @@ async function run() {
     if (sqliteDb) {
       console.log(`- data.sqlite : ${rSqlite ? 'Reverted settings in-place (personas re-enabled)' : 'Unmodified / unavailable'}`);
     }
+
+    const undiciDir = path.join(pkgDir, 'app', 'node_modules', 'undici');
+    if (fs.existsSync(undiciDir)) {
+      restoreFile(path.join(undiciDir, 'lib', 'interceptor', 'decompress.js'));
+      restoreFile(path.join(undiciDir, 'lib', 'web', 'fetch', 'index.js'));
+      restoreFile(path.join(undiciDir, 'lib', 'web', 'webidl', 'index.js'));
+      console.log('- undici files   : Restored from .bak if present');
+    }
+    restoreFile(path.join(pkgDir, 'app', 'custom-server.js'));
+
     console.log('\n✅ Revert complete! Please restart 9Router.\n');
     return;
   }
@@ -432,15 +563,15 @@ async function run() {
 
     // Module 32447 (Kimchi) if present in usage chunk
     if (cUsage.includes('32447:')) {
-      const validMod32447 = '32447:(a,b,c)=>{ /* __9R_32447_FIX__ */ c.d(b,{BL:()=>g});var d=c(96179),e=c(52007);let f=["anthropic_version","anthropic_beta","client_metadata","mcp_servers","stop_sequences","thinking","top_k"];class g extends d.L{constructor(){super("kimchi")}transformRequest(a,b,c,d){let g,h=super.transformRequest(a,b,c,d);if(!h||"object"!=typeof h)return h;for(let a of(!function(a){var b;if(!a?.system||!Array.isArray(a.messages))return;let c=("string"==typeof(b=a.system)?b:Array.isArray(b)?b.map(a=>"string"==typeof a?a:"string"==typeof a?.text?a.text:"").filter(Boolean).join("\\n"):"").trim();if(!c)return;let d=a.messages.find(a=>a?.role==="system");d?"string"==typeof d.content?d.content=`${c}\\n\\n${d.content}`:Array.isArray(d.content)&&d.content.unshift({type:"text",text:c}):a.messages.unshift({role:"system",content:c})}(h),f))void 0!==h[a]&&delete h[a];if(delete h.system,g=(0,e.gK)(a),(g?.provider==="anthropic"||g?.upstreamProvider==="anthropic"||/(^|[-_/])(?:claude|anthropic)(?:[-_/]|$)/i.test(String(a||"")))&&(delete h.reasoning_effort,delete h.reasoning,delete h.thinking),Array.isArray(h?.messages)){let isLocal=' + matchExpr + '.test(String(a||""));for(let a of h.messages){if(a&&"object"==typeof a){delete a.cache_control;if(isLocal&&"string"==typeof a.content){a.content=a.content.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}if(Array.isArray(a.content)){a.content=a.content.map(a=>{if(!a||"object"!=typeof a)return a;let{signature:c,cache_control:b,...d}=a;if(isLocal&&"text"===d.type&&"string"==typeof d.text){d.text=d.text.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}return d});if(isLocal&&(0===a.content.length||a.content.every(a=>!a||"text"===a?.type&&(!a?.text||!a?.text.trim())))){a.content=" "}}if(isLocal&&"user"===a.role&&(!a.content||(Array.isArray(a.content)&&0===a.content.length)||""===a.content)){a.content=" "}if("assistant"===a.role&&"string"==typeof a.reasoning_content&&a.reasoning_content.length>8)delete a.reasoning_content}}}if(Array.isArray(h?.tools)){h.tools=h.tools.map(a=>{if(!a||"object"!=typeof a)return a;let{cache_control:b,...c}=a;return c})}return h}}}';
-      if (!cUsage.includes('/* __9R_32447_FIX__ */') && !cUsage.includes('/* __9R_32447_KIMCHI_FIX__ */')) {
+      const validMod32447 = '32447:(a,b,c)=>{ /* __9R_32447_FIX_V2__ */ c.d(b,{BL:()=>g});var d=c(96179),e=c(52007);let f=["anthropic_version","anthropic_beta","client_metadata","mcp_servers","stop_sequences","thinking","top_k"];class g extends d.L{constructor(){super("kimchi")}transformRequest(a,b,c,d){let g,h=super.transformRequest(a,b,c,d);if(!h||"object"!=typeof h)return h;for(let a of(!function(a){var b;if(!a?.system||!Array.isArray(a.messages))return;let c=("string"==typeof(b=a.system)?b:Array.isArray(b)?b.map(a=>"string"==typeof a?a:"string"==typeof a?.text?a.text:"").filter(Boolean).join("\\n"):"").trim();if(!c)return;let d=a.messages.find(a=>a?.role==="system");d?"string"==typeof d.content?d.content=`${c}\\n\\n${d.content}`:Array.isArray(d.content)&&d.content.unshift({type:"text",text:c}):a.messages.unshift({role:"system",content:c})}(h),f))void 0!==h[a]&&delete h[a];if(delete h.system,g=(0,e.gK)(a),(g?.provider==="anthropic"||g?.upstreamProvider==="anthropic"||/(^|[-_/])(?:claude|anthropic)(?:[-_/]|$)/i.test(String(a||"")))&&(delete h.reasoning_effort,delete h.reasoning,delete h.thinking),Array.isArray(h?.messages)){let isLocal=' + matchExpr + '.test(String(a||""));for(let a of h.messages){if(a&&"object"==typeof a){delete a.cache_control;if(isLocal&&"string"==typeof a.content){a.content=a.content' + stripCall + '.trim()||" "}if(Array.isArray(a.content)){a.content=a.content.map(a=>{if(!a||"object"!=typeof a)return a;let{signature:c,cache_control:b,...d}=a;if(isLocal&&"text"===d.type&&"string"==typeof d.text){d.text=d.text' + stripCall + '.trim()}return d});if(isLocal){a.content=a.content.filter(a=>!(a&&"text"===a.type&&(!a.text||!a.text.trim())));if(0===a.content.length){a.content=" "}}}if(isLocal&&"user"===a.role&&(!a.content||(Array.isArray(a.content)&&0===a.content.length)||""===a.content)){a.content=" "}if("assistant"===a.role&&"string"==typeof a.reasoning_content&&a.reasoning_content.length>8)delete a.reasoning_content}}}if(Array.isArray(h?.tools)){h.tools=h.tools.map(a=>{if(!a||"object"!=typeof a)return a;let{cache_control:b,...c}=a;return c})}return h}}}';
+      if (!cUsage.includes('/* __9R_32447_FIX_V2__ */')) {
         const idx = cUsage.indexOf('32447:');
         const nextMod36732 = cUsage.indexOf(',36732:', idx);
         const nextMod38572 = cUsage.indexOf(',38572:', idx);
         const nextMod = (nextMod36732 !== -1 && (nextMod38572 === -1 || nextMod36732 < nextMod38572)) ? nextMod36732 : nextMod38572;
         if (idx !== -1 && nextMod !== -1) {
           cUsage = cUsage.slice(0, idx) + validMod32447 + cUsage.slice(nextMod);
-          logsUsage.push(`  ✅ [${chunks.usageFile}] Repaired chunk syntax & local model prompt filter (module 32447)`);
+          logsUsage.push(`  ✅ [${chunks.usageFile}] Repaired chunk syntax & local-only V2 prompt filter (module 32447)`);
         }
       }
     }
@@ -513,32 +644,42 @@ async function run() {
     const logsOpenAi = existingEntry ? existingEntry.logs : [];
     let openAiOk = true;
 
-    if (cOpenAi.includes('/* __9R_96179_FIX__ */') || cOpenAi.includes('/* __9R_96179_FIX_v2__ */') || cOpenAi.includes('/* __9R_7373_FIX__ */')) {
-      logsOpenAi.push(`  ℹ️  [${chunks.openAiFile}] OpenAI-compatible local model prompt filter already active`);
+    if (cOpenAi.includes('/* __9R_96179_FIX_V2__ */')) {
+      logsOpenAi.push(`  ℹ️  [${chunks.openAiFile}] OpenAI-compatible V2 local-only prompt filter already active`);
     } else {
+      const filterBodySnippet = (bv, retExpr) => `if(${matchExpr}.test(String(this.provider||""))||${matchExpr}.test(String(a||""))){if(Array.isArray(${bv}.messages)){for(let a of ${bv}.messages){if(a&&"string"==typeof a.content){a.content=a.content${stripCall}.trim()||" "}else if(a&&Array.isArray(a.content)){a.content=a.content.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text${stripCall}.trim()}return a}).filter(a=>!(a&&"text"===a.type&&(!a.text||!a.text.trim())));if(0===a.content.length){a.content=" "}}if("user"===a?.role&&(!a.content||(Array.isArray(a.content)&&0===a.content.length)||""===a.content)){a.content=" "}}}}this.config.quirks?.dropClientMetadata&&delete ${bv}.client_metadata,${retExpr}`;
+
       // Pattern v2 (9Router >= 0.5.111 in 7373.js): transformRequest(a,b,c,d){let e=this.applyJsonSchemaFallback(this.applyNousAttribution(a,b,c,d));...}
       const ptnV2 = /transformRequest\(a,b,c,d\)\{let ([a-zA-Z0-9_$]+)=this\.applyJsonSchemaFallback\(this\.applyNousAttribution\(a,b,c,d\)\);return \1&&"object"==typeof \1&&\(this\.config\.quirks\?\.dropClientMetadata&&delete \1\.client_metadata,\((0,[a-zA-Z0-9_$]+\.[a-zA-Z0-9_$]+)\)\(this\.provider,a,\1\)\),\((0,[a-zA-Z0-9_$]+\.[a-zA-Z0-9_$]+)\)\(\{provider:this\.provider,model:a,body:\1\}\)\}/;
       const matchV2 = cOpenAi.match(ptnV2);
 
+      // Existing v1->v2 upgrade in 7373.js / 318.js
+      const upgradeV2Ptn = /transformRequest\(a,b,c,d\)\{\/\* __9R_(?:96179_FIX(?:_v2)?|7373_FIX)__ \*\/let ([a-zA-Z0-9_$]+)=this\.applyJsonSchemaFallback\(this\.applyNousAttribution\(a,b,c,d\)\);[\s\S]*?,\((0,[a-zA-Z0-9_$]+\.[a-zA-Z0-9_$]+)\)\(this\.provider,a,\1\)\}return\((0,[a-zA-Z0-9_$]+\.[a-zA-Z0-9_$]+)\)\(\{provider:this\.provider,model:a,body:\1\}\)\}/;
+      const upgradeMatchV2 = cOpenAi.match(upgradeV2Ptn);
+
       // Pattern v1 (9Router <= 0.5.110 in 318.js): transformRequest(a,b){let c=this.applyJsonSchemaFallback(b);...}
       const targetV1 = 'transformRequest(a,b){let c=this.applyJsonSchemaFallback(b);return c&&"object"==typeof c&&(this.config.quirks?.dropClientMetadata&&delete c.client_metadata,(0,l.c)(this.provider,a,c)),(0,k.Z)({provider:this.provider,model:a,body:c})}';
-      const replV1 = 'transformRequest(a,b){/* __9R_96179_FIX__ */let c=this.applyJsonSchemaFallback(b);if(c&&"object"==typeof c){if(this.provider?.startsWith?.("openai-compatible-")||' + matchExpr + '.test(String(a||""))){if(Array.isArray(c.messages)){for(let a of c.messages){if(a&&"string"==typeof a.content){a.content=a.content.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}else if(a&&Array.isArray(a.content)){a.content=a.content.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}return a});if(0===a.content.length||a.content.every(a=>!a||"text"===a?.type&&(!a?.text||!a?.text.trim()))){a.content=" "}}if("user"===a?.role&&(!a.content||(Array.isArray(a.content)&&0===a.content.length)||""===a.content)){a.content=" "}}}}this.config.quirks?.dropClientMetadata&&delete c.client_metadata,(0,l.c)(this.provider,a,c)}return(0,k.Z)({provider:this.provider,model:a,body:c})}';
+      const replV1 = `transformRequest(a,b){/* __9R_96179_FIX_V2__ */let c=this.applyJsonSchemaFallback(b);if(c&&"object"==typeof c){${filterBodySnippet('c', '(0,l.c)(this.provider,a,c)')}}return(0,k.Z)({provider:this.provider,model:a,body:c})}`;
+
+      const buildV2 = (m) => {
+        const bodyVar = m[1], quirkFn = m[2], retFn = m[3];
+        return `transformRequest(a,b,c,d){/* __9R_96179_FIX_V2__ */let ${bodyVar}=this.applyJsonSchemaFallback(this.applyNousAttribution(a,b,c,d));if(${bodyVar}&&"object"==typeof ${bodyVar}){${filterBodySnippet(bodyVar, `(${quirkFn})(this.provider,a,${bodyVar})`)}}return(${retFn})({provider:this.provider,model:a,body:${bodyVar}})}`;
+      };
 
       if (matchV2) {
-        const bodyVar = matchV2[1];
-        const quirkFn = matchV2[2];
-        const retFn = matchV2[3];
-        const replV2 = `transformRequest(a,b,c,d){/* __9R_96179_FIX__ */let ${bodyVar}=this.applyJsonSchemaFallback(this.applyNousAttribution(a,b,c,d));if(${bodyVar}&&"object"==typeof ${bodyVar}){if(this.provider?.startsWith?.("openai-compatible-")||${matchExpr}.test(String(a||""))){if(Array.isArray(${bodyVar}.messages)){for(let a of ${bodyVar}.messages){if(a&&"string"==typeof a.content){a.content=a.content.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}else if(a&&Array.isArray(a.content)){a.content=a.content.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}return a});if(0===a.content.length||a.content.every(a=>!a||"text"===a?.type&&(!a?.text||!a?.text.trim()))){a.content=" "}}if("user"===a?.role&&(!a.content||(Array.isArray(a.content)&&0===a.content.length)||""===a.content)){a.content=" "}}}}this.config.quirks?.dropClientMetadata&&delete ${bodyVar}.client_metadata,(${quirkFn})(this.provider,a,${bodyVar})}return(${retFn})({provider:this.provider,model:a,body:${bodyVar}})}`;
-        cOpenAi = cOpenAi.replace(matchV2[0], replV2);
-        logsOpenAi.push(`  ✅ [${chunks.openAiFile}] Injected OpenAI-compatible local model prompt filter (v2)`);
+        cOpenAi = cOpenAi.replace(matchV2[0], buildV2(matchV2));
+        logsOpenAi.push(`  ✅ [${chunks.openAiFile}] Injected OpenAI-compatible local-only V2 prompt filter (v2 layout)`);
+      } else if (upgradeMatchV2) {
+        cOpenAi = cOpenAi.replace(upgradeMatchV2[0], buildV2(upgradeMatchV2));
+        logsOpenAi.push(`  ✅ [${chunks.openAiFile}] Upgraded OpenAI-compatible prompt filter from v1 to V2 (v2 layout)`);
       } else if (cOpenAi.includes(targetV1)) {
         cOpenAi = cOpenAi.replace(targetV1, replV1);
-        logsOpenAi.push(`  ✅ [${chunks.openAiFile}] Injected OpenAI-compatible local model prompt filter (v1)`);
+        logsOpenAi.push(`  ✅ [${chunks.openAiFile}] Injected OpenAI-compatible local-only V2 prompt filter (v1 layout)`);
       } else {
-        const existing96179Pattern = /transformRequest\(a,b\)\{let c=this\.applyJsonSchemaFallback\(b\);[\s\S]*?return\(0,k\.Z\)\(\{provider:this\.provider,model:a,body:c\}\)\}/;
+        const existing96179Pattern = /transformRequest\(a,b\)\{(?:\/\* __9R_[^*]+ \*\/)?let c=this\.applyJsonSchemaFallback\(b\);[\s\S]*?return\(0,k\.Z\)\(\{provider:this\.provider,model:a,body:c\}\)\}/;
         if (existing96179Pattern.test(cOpenAi)) {
           cOpenAi = cOpenAi.replace(existing96179Pattern, replV1);
-          logsOpenAi.push(`  ✅ [${chunks.openAiFile}] Injected OpenAI-compatible local model prompt filter with sentinel (v1)`);
+          logsOpenAi.push(`  ✅ [${chunks.openAiFile}] Upgraded OpenAI-compatible prompt filter to V2 (v1 layout)`);
         } else {
           logsOpenAi.push(`  ℹ️  [${chunks.openAiFile}] transformRequest pattern already modified or not found`);
         }
@@ -591,22 +732,29 @@ async function run() {
       logsAnthropic.push(`  ✅ [${chunks.anthropicFile}] Injected universal Anthropic /v1/messages adapter`);
     }
 
-    // 4b. Local model prompt stripper
+    // 4b. Local model prompt stripper (V2: local-only + preserves <task-notification>)
     const ttsRegex = /"tts"===\(0,[a-zA-Z0-9_$]+\.[a-zA-Z0-9_$]+\)\([^)]+\)&&([a-zA-Z0-9_$]+)\.messages&&\(\1\.messages=\1\.messages\.filter\(a=>"tool"!==a\.role\),delete \1\.tools\);?/;
     const ttsMatch = cAnthropic.match(ttsRegex);
 
-    if (cAnthropic.includes('/* __9R_8895_FILTER_FIX__ */') || cAnthropic.includes('/* __9R_8895_FILTER_FIX_v2__ */')) {
-      logsAnthropic.push(`  ℹ️  [${chunks.anthropicFile}] Local model prompt stripping filter already active`);
+    if (cAnthropic.includes('/* __9R_8895_FILTER_FIX_V2__ */')) {
+      logsAnthropic.push(`  ℹ️  [${chunks.anthropicFile}] Local-only V2 prompt stripping filter already active`);
     } else if (ttsMatch) {
       const preceding = cAnthropic.slice(Math.max(0, ttsMatch.index - 500), ttsMatch.index);
       const provModMatch = preceding.match(/POST \$\{[^}]+\} → \$\{([a-zA-Z0-9_$]+)\}\/\$\{([a-zA-Z0-9_$]+)\}/);
       const provVar = provModMatch ? provModMatch[1] : 'ao';
       const modVar = provModMatch ? provModMatch[2] : 'ap';
       const bodyVar = ttsMatch[1];
-      const iife = `/* __9R_8895_FILTER_FIX__ */((() => { if(${matchExpr}.test(String(${modVar}||""))||${matchExpr}.test(String(${provVar}||""))){if(${bodyVar}.system){if("string"==typeof ${bodyVar}.system){${bodyVar}.system=${bodyVar}.system.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()}else if(Array.isArray(${bodyVar}.system)){${bodyVar}.system=${bodyVar}.system.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()}return a})}}if(Array.isArray(${bodyVar}.messages)){for(let a of ${bodyVar}.messages){if(a&&"string"==typeof a.content){a.content=a.content.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}else if(a&&Array.isArray(a.content)){a.content=a.content.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/gi,"").trim()||" "}return a});if(0===a.content.length||a.content.every(a=>!a||"text"===a?.type&&(!a?.text||!a?.text.trim()))){a.content=" "}}if("user"===a?.role&&(!a.content||(Array.isArray(a.content)&&0===a.content.length)||""===a.content)){a.content=" "}}}} })())`;
-      const dynamicTtsRepl = `${ttsMatch[0]},${iife}`;
-      cAnthropic = cAnthropic.replace(ttsMatch[0], dynamicTtsRepl);
-      logsAnthropic.push(`  ✅ [${chunks.anthropicFile}] Injected local model prompt stripping filter`);
+      const iifeV2 = `/* __9R_8895_FILTER_FIX_V2__ */((() => { if(${matchExpr}.test(String(${modVar}||""))||${matchExpr}.test(String(${provVar}||""))){if(${bodyVar}.system){if("string"==typeof ${bodyVar}.system){${bodyVar}.system=${bodyVar}.system${stripCall}.trim()}else if(Array.isArray(${bodyVar}.system)){${bodyVar}.system=${bodyVar}.system.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text${stripCall}.trim()}return a}).filter(a=>!(a&&"text"===a.type&&(!a.text||!a.text.trim())))}}if(Array.isArray(${bodyVar}.messages)){for(let a of ${bodyVar}.messages){if(a&&"string"==typeof a.content){a.content=a.content${stripCall}.trim()||" "}else if(a&&Array.isArray(a.content)){a.content=a.content.map(a=>{if(a&&"text"===a.type&&"string"==typeof a.text){a.text=a.text${stripCall}.trim()}return a}).filter(a=>!(a&&"text"===a.type&&(!a.text||!a.text.trim())));if(0===a.content.length){a.content=" "}}if("user"===a?.role&&(!a.content||(Array.isArray(a.content)&&0===a.content.length)||""===a.content)){a.content=" "}}}} })())`;
+
+      const existingV1Ptn = /\/\* __9R_8895_FILTER_FIX(?:_v2)?__ \*\/\(\(\(\) => \{[\s\S]*?\}\)\(\)\)/;
+      if (existingV1Ptn.test(cAnthropic)) {
+        cAnthropic = cAnthropic.replace(existingV1Ptn, iifeV2);
+        logsAnthropic.push(`  ✅ [${chunks.anthropicFile}] Upgraded local model prompt stripping filter from v1 to V2`);
+      } else {
+        const dynamicTtsRepl = `${ttsMatch[0]},${iifeV2}`;
+        cAnthropic = cAnthropic.replace(ttsMatch[0], dynamicTtsRepl);
+        logsAnthropic.push(`  ✅ [${chunks.anthropicFile}] Injected local-only V2 prompt stripping filter`);
+      }
     }
 
     if (anthropicOk && cAnthropic !== origCAnthropic) {
@@ -631,6 +779,19 @@ async function run() {
     console.error(`\nDiagnostics: 9Router installation (v${routerVersion}) may be unsupported or modified.`);
     console.error('Do NOT report success; please check the logs above.\n');
     process.exit(1);
+  }
+
+  
+  // 6. Ensure custom-server.js wrapper
+  const customServerLogs = ensureCustomServer(pkgDir);
+  for (const logMsg of customServerLogs) {
+    console.log(logMsg);
+  }
+
+  // 7. Apply Undici & Node compatibility patches
+  const undiciLogs = patchUndiciCompatibility(pkgDir);
+  for (const logMsg of undiciLogs) {
+    console.log(logMsg);
   }
 
   // Write files to disk atomically

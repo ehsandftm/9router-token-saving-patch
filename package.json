@@ -1,10 +1,11 @@
 {
   "name": "9router-token-saving-patch",
-  "version": "1.2.0",
-  "description": "1-line zero-credential patch eliminating +2800 phantom token overhead, dummy tool schemas, and Claude format errors in 9Router.",
+  "version": "1.4.0",
+  "description": "1-line zero-credential patch eliminating +2800 phantom token overhead, dummy tool schemas, Node 20 runtime errors, Claude format errors, and unsafe <system-reminder> cloud stripping in 9Router.",
   "main": "patch.js",
   "files": [
     "patch.js",
+    "custom-server.js",
     "README.md",
     "LICENSE"
   ],

@@ -1,4 +1,4 @@
-# ⚡ 9Router Token Saving Patch (v1.1.0)
+# ⚡ 9Router Token Saving Patch (v1.4.0)
 
 > **A zero-dependency, 1-line self-healing patch for [9Router](https://github.com/decolua/9router) that eliminates ~2,800+ phantom token overhead per request, fixes Claude Code / Claude Desktop payload crashes, and prevents HTTP 500 syntax errors.**
 
@@ -77,8 +77,8 @@ curl -fsSL https://raw.githubusercontent.com/ehsandftm/9router-token-saving-patc
 
 ## ⚙️ Advanced Configuration (Local Model Regex Customization)
 
-By default, the patch matches standard local engines and common open-weight model architectures:
-`/(?:ollama|unsloth|vllm|lmstudio|llama\.?cpp|qwen|llama|mistral|deepseek|gemma|phi|local-|openai-compatible-)/i`
+By default (v1.4.0+), the patch matches **strictly local engines and local model identifiers** so cloud-hosted `openai-compatible-*` providers (`mgateway`, OpenRouter-style gateways, `deepseek`, `qwen`, etc.) are never misclassified as local:
+`/(?:^|[\/\-_:])(?:ollama|unsloth|uns|vllm|lmstudio|llama\.?cpp|bonsai|local|gguf|qwen3\.8-27b)(?:$|[\/\-_:])/i`
 
 For power users who run custom local model endpoints or naming schemes, set the `NINEROUTER_LOCAL_MODELS` environment variable prior to starting 9Router or running the patch:
 
@@ -105,9 +105,9 @@ For developers, contributors, and auditors, here is the exact breakdown of the 5
 - **The Bug**: When `/v1/messages` routed requests to non-Anthropic fallback providers (Gemini, Antigravity, OpenCode, Kimi), 9Router returned raw OpenAI completion objects (`{"object":"chat.completion", "choices":[...]}`). Claude Desktop and Claude Code threw `HTTP 200: empty or malformed response` because they expected Anthropic schema (`{"type":"message", "content":[...]}`). Furthermore, upstream prompt cache read tokens (`cache_read_input_tokens`, `cached_tokens`, `prompt_tokens_details.cached_tokens`) were dropped during conversion, registering cached tokens as 100% full input costs.
 - **The Fix**: Injected an automatic schema adapter in module `5016` that translates OpenAI completion payloads into valid Anthropic Message objects (`type: "message"`, `role: "assistant"`, `content: [...]`, `stop_reason: "end_turn"`), accurately calculating `input_tokens = Math.max(0, m - k - l)` and preserving `cache_read_input_tokens` and `cache_creation_input_tokens`.
 
-### 4. Transparent Local Model Prompt Stripper (`318.js` & `8895.js` — Modules 32447, 96179, & /v1/messages)
-- **The Bug**: Heavy desktop manager instructions, rules, and `<system-reminder>` blocks were transmitted verbatim to local models (Ollama / Unsloth Qwen), imposing massive prompt evaluation compute delays (up to 15,000+ unnecessary tokens per local turn). Empty string or array contents produced after stripping caused downstream schema validation failures or local server errors.
-- **The Fix**: Automatically strips `<system-reminder>` blocks from both string and array message contents dispatched to local model endpoints matching standard engines (`ollama`, `unsloth`, `vllm`, `lmstudio`, `llama.cpp`) or open-weight models (`qwen`, `llama`, `mistral`, `deepseek`, `gemma`, `phi`), or custom regex set via `NINEROUTER_LOCAL_MODELS`. Sanitizes empty user contents to `" "` (single space) and prevents empty array content payloads.
+### 4. Transparent Local Model Prompt Stripper V2 (`318.js`/`7373.js`/`5330.js` & `8895.js`)
+- **The Bug**: Heavy desktop manager instructions and `<system-reminder>` blocks were transmitted verbatim to local models (Ollama / Unsloth / Bonsai), imposing massive prompt evaluation delays (15,000+ tokens). Conversely, naive prefix/family matching (`openai-compatible-` or bare `deepseek`/`qwen`) stripped `<system-reminder>` tags—including background `<task-notification>` completion payloads—from cloud-hosted OpenAI-compatible gateways.
+- **The Fix (V2)**: Uses a strict local-only predicate (`ollama`, `unsloth`, `uns`, `vllm`, `lmstudio`, `llama.cpp`, `bonsai`, `local`, `gguf`, `qwen3.8-27b`, overridable via `NINEROUTER_LOCAL_MODELS`) plus a callback replacer that **always preserves** `<task-notification>`, `<local-command-`, and `<command-message` blocks even on local models. Emptied text blocks are cleaned safely (`" "` fallback only when the entire message becomes empty). Existing v1 installs upgrade cleanly in-place to `_V2` sentinels.
 
 ### 5. Automatic System Persona Disabling (`data.sqlite`)
 - **The Bug**: 9Router's internal database had `cavemanEnabled: true` and `ponytailEnabled: true` active by default, prepending ~780 tokens of unsolicited persona rules into every prompt.
